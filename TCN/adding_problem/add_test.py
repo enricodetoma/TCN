@@ -2,8 +2,11 @@ import torch
 import argparse
 import torch.optim as optim
 import torch.nn.functional as F
+import sys
+sys.path.append("../../")
 from TCN.adding_problem.model import TCN
 from TCN.adding_problem.utils import data_generator
+
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - The Adding Problem')
 parser.add_argument('--batch_size', type=int, default=32, metavar='N',
