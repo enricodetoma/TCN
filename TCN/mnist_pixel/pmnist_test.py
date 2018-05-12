@@ -2,6 +2,8 @@ import torch
 from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn.functional as F
+import sys
+sys.path.append("../../")
 from TCN.mnist_pixel.utils import data_generator
 from TCN.mnist_pixel.model import TCN
 import numpy as np
