@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
+import sys
+sys.path.append("../../")
 from TCN.poly_music.model import TCN
 from TCN.poly_music.utils import data_generator
 import numpy as np
