@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 import numpy as np
+import sys
+sys.path.append("../../")
 from TCN.copy_memory.utils import data_generator
 from TCN.copy_memory.model import TCN
 import time
@@ -106,7 +108,7 @@ def train(ep):
 
         x = train_x[start_ind:end_ind]
         y = train_y[start_ind:end_ind]
-        
+
         optimizer.zero_grad()
         out = model(x.unsqueeze(1).contiguous())
         loss = criterion(out.view(-1, n_classes), y.view(-1))
