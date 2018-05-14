@@ -36,6 +36,8 @@ parser.add_argument('--seed', type=int, default=1111,
                     help='random seed (default: 1111)')
 parser.add_argument('--permute', action='store_true',
                     help='use permuted MNIST (default: false)')
+parser.add_argument('--acc-file', type=str, default='test_acc.txt',
+                    help='file for test accuracy')
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
@@ -50,6 +52,9 @@ input_channels = 1
 seq_length = int(784 / input_channels)
 epochs = args.epochs
 steps = 0
+
+iterations = 0
+test_acc = []
 
 print(args)
 train_loader, test_loader = data_generator(root, batch_size)
@@ -68,10 +73,11 @@ optimizer = getattr(optim, args.optim)(model.parameters(), lr=lr)
 
 
 def train(ep):
-    global steps
+    global steps, iterations, test_acc
     train_loss = 0
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
+        iterations += 1
         if args.cuda: data, target = data.cuda(), target.cuda()
         data = data.view(-1, input_channels, seq_length)
         if args.permute:
@@ -91,6 +97,10 @@ def train(ep):
                 ep, batch_idx * batch_size, len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), train_loss.data[0]/args.log_interval, steps))
             train_loss = 0
+        if iterations == 1 or iterations % args.log_interval == 0:
+            acc = test_accuracy()
+            test_acc.append([iterations, acc])
+            print('Iter: {}, Acc: {}'.format(iterations, acc))
 
 
 def test():
@@ -116,6 +126,26 @@ def test():
     return test_loss
 
 
+def test_accuracy():
+    model.eval()
+    test_loss = 0
+    correct = 0
+    for data, target in test_loader:
+        if args.cuda:
+            data, target = data.cuda(), target.cuda()
+        data = data.view(-1, input_channels, seq_length)
+        if args.permute:
+            data = data[:, :, permute]
+        data, target = Variable(data, volatile=True), Variable(target)
+        output = model(data)
+        test_loss += F.nll_loss(output, target, size_average=False).data[0]
+        pred = output.data.max(1, keepdim=True)[1]
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+
+    return correct / len(test_loader.dataset)
+
+
+
 if __name__ == "__main__":
     for epoch in range(1, epochs+1):
         train(epoch)
@@ -124,3 +154,8 @@ if __name__ == "__main__":
             lr /= 10
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr
+
+    f = open(args.acc_file, 'w')
+    for (i, acc) in test_acc:
+        f.write("%d, %f\n" % (i, acc))
+    f.close()
