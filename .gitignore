@@ -5,3 +5,7 @@ wikitext-103/
 *.log
 *.pyc
 __pycache__/
+*.gz
+.ipynb_checkpoints
+tcn-env/
+TCN/char_cnn/data/
