@@ -9,6 +9,9 @@ from TCN.mnist_pixel.model import TCN, LSTM
 import numpy as np
 import argparse
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters())
+
 parser = argparse.ArgumentParser(description='Sequence Modeling - (Permuted) Sequential MNIST')
 parser.add_argument('--batch_size', type=int, default=64, metavar='N',
                     help='batch size (default: 64)')
@@ -38,6 +41,8 @@ parser.add_argument('--permute', action='store_true',
                     help='use permuted MNIST (default: false)')
 parser.add_argument('--acc-file', type=str, default='test_acc.txt',
                     help='file for test accuracy')
+parser.add_argument('--lstm', action='store_true', default=False,
+                    help='whether or not to use LSTM')
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
@@ -63,8 +68,12 @@ permute = torch.Tensor(np.random.permutation(784).astype(np.float64)).long()
 channel_sizes = [args.nhid] * args.levels
 kernel_size = args.ksize
 
-model = LSTM(input_channels, 80, n_classes)
-# model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
+if args.lstm:
+    model = LSTM(input_channels, 130, n_classes)
+else:
+    model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
+
+print(count_parameters(model))
 
 if args.cuda:
     model.cuda()
@@ -80,6 +89,7 @@ def train(ep):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         iterations += 1
+        print(iterations)
         if args.cuda: data, target = data.cuda(), target.cuda()
         data = data.view(-1, input_channels, seq_length)
         if args.permute:
