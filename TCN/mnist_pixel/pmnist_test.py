@@ -9,6 +9,18 @@ from TCN.mnist_pixel.model import TCN, LSTM
 import numpy as np
 import argparse
 
+
+import torch._utils
+try:
+    torch._utils._rebuild_tensor_v2
+except AttributeError:
+    def _rebuild_tensor_v2(storage, storage_offset, size, stride, requires_grad, backward_hooks):
+        tensor = torch._utils._rebuild_tensor(storage, storage_offset, size, stride)
+        tensor.requires_grad = requires_grad
+        tensor._backward_hooks = backward_hooks
+        return tensor
+    torch._utils._rebuild_tensor_v2 = _rebuild_tensor_v2
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
@@ -69,7 +81,7 @@ channel_sizes = [args.nhid] * args.levels
 kernel_size = args.ksize
 
 if args.lstm:
-    model = LSTM(input_channels, 130, n_classes)
+    model = LSTM(input_channels, 75, n_classes)
 else:
     model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
 
@@ -89,7 +101,6 @@ def train(ep):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         iterations += 1
-        print(iterations)
         if args.cuda: data, target = data.cuda(), target.cuda()
         data = data.view(-1, input_channels, seq_length)
         if args.permute:
