@@ -11,7 +11,7 @@ def sine_data_generator(N, seq_length):
         seq_length: Length of the adding problem data
         N: # of data in the set
     """
-    period = seq_length / 2
+    period = seq_length / 1.5
     X = torch.zeros([N, 1, seq_length])
     Y = torch.zeros([N, 1])
     for i in range(N):

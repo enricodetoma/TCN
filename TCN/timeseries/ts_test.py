@@ -47,12 +47,14 @@ parser.add_argument('--lr', type=float, default=4e-3,
                     help='initial learning rate (default: 2e-3)')
 parser.add_argument('--optim', type=str, default='Adam',
                     help='optimizer to use (default: Adam)')
-parser.add_argument('--nhid', type=int, default=30,
+parser.add_argument('--nhid', type=int, default=10,
                     help='number of hidden units per layer (default: 25)')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed (default: 1111)')
 parser.add_argument('--win_size', type=int, default=100,
                     help='size of time series segment (default: 100)')
+parser.add_argument('--outfile', type=str, default='predictions.txt',
+                    help='output file name')
 parser.add_argument('--lstm', action='store_true', default=False,
                     help='whether or not to use LSTM')
 args = parser.parse_args()
@@ -70,36 +72,41 @@ seq_length = args.win_size
 epochs = args.epochs
 steps = 0
 
+iterations = 0
+test_losses = []
+
 print(args)
 print("Producing data...")
 X_train, Y_train = sine_data_generator(50000, seq_length)
-X_test, Y_test = sine_data_generator(1000, seq_length)
-
-channel_sizes = [args.nhid] * args.levels
-kernel_size = args.ksize
-
-if args.lstm:
-    model = LSTM(input_channels, 75, n_classes)
-else:
-    model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
-
+X_test, Y_test = sine_data_generator(5000, seq_length)
 if args.cuda:
-    model.cuda()
     X_train = X_train.cuda()
     Y_train = Y_train.cuda()
     X_test = X_test.cuda()
     Y_test = Y_test.cuda()
-
+kernel_size = args.ksize
 lr = args.lr
-optimizer = getattr(optim, args.optim)(model.parameters(), lr=lr)
+
+def model_init(channel_sizes):
+    if args.lstm:
+        model = LSTM(input_channels, channel_sizes, n_classes)
+    else:
+        model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
+
+    if args.cuda:
+        model.cuda()
+
+    optimizer = getattr(optim, args.optim)(model.parameters(), lr=lr)
+    return model, optimizer
 
 
 def train(epoch):
-    global steps
+    global steps, iterations, test_acc
     total_loss = 0
     model.train()
     batch_idx = 1
     for i in range(0, X_train.size()[0], batch_size):
+        iterations += 1
         if i + batch_size > X_train.size()[0]:
             x, y = X_train[i:], Y_train[i:]
         else:
@@ -120,21 +127,62 @@ def train(epoch):
             print('Train Epoch: {:2d} [{:6d}/{:6d} ({:.0f}%)]\tLearning rate: {:.4f}\tLoss: {:.6f}'.format(
                 epoch, processed, X_train.size()[0], 100.*processed/X_train.size()[0], lr, cur_loss))
             total_loss = 0
+        # if iterations == 1 or iterations % args.log_interval == 0:
+        #     loss = evaluate(is_output=False)
+        #     test_losses.append([iterations, loss])
+        #     print('Iter: {}, Loss: {}'.format(iterations, loss))
 
 
-def evaluate():
+def evaluate(is_output=True):
     model.eval()
     output = model(X_test)
     test_loss = F.l1_loss(output, Y_test)
-    print('\nTest set: Average loss: {:.6f}\n'.format(test_loss.data[0]))
+    if is_output:
+        print('\nTest set: Average loss: {:.6f}\n'.format(test_loss.data[0]))
     return test_loss.data[0]
 
 
+def prediction(prediction_inputs):
+    model.eval()
+    for i in range(len(prediction_inputs)):
+        raw = prediction_inputs[i]
+        predict_x = Variable(torch.FloatTensor(raw).unsqueeze(0).unsqueeze(0))
+        predictions = []
+        for i in range(seq_length):
+            output = model(predict_x.cuda()).data.cpu().numpy()[0][0]
+            predictions.append(output)
+            raw = np.append(raw[1:], [output])
+            predict_x = Variable(torch.FloatTensor(raw).unsqueeze(0).unsqueeze(0))
+        f.write('%s\n' %str(predictions))
+
 if __name__ == "__main__":
-    for ep in range(1, epochs+1):
-        train(ep)
-        tloss = evaluate()
-        if epoch % 10 == 0:
-            lr /= 10
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
+    f = open(args.outfile, "w")
+    period = seq_length / 1.5
+    prediction_inputs = []
+    for i in range(5):
+        phase = np.random.rand() * period
+        raw = np.sin(np.arange(seq_length) * 2 * np.pi / period + phase)
+        prediction_inputs.append(raw)
+        f.write('%s\n' %str(list(raw)))
+    for levels in range(1, 8):
+        print("Level: %d" % levels)
+        if args.lstm:
+            channel_sizes = levels * 4
+        else:
+            channel_sizes = [args.nhid] * levels
+        model, optimizer = model_init(channel_sizes)
+        for ep in range(1, epochs+1):
+            train(ep)
+            tloss = evaluate()
+
+        f.write('level: %d\n' % levels)
+        f.write("Model parameters: %d\n" % count_parameters(model))
+        prediction(prediction_inputs)
+        f.write('\n')
+    f.close()
+    # f.close()
+    # f = open(args.loss_file, 'w')
+    # for (i, l) in test_losses:
+    #     f.write("%d, %f\n" % (i, l))
+    # f.close()
+
