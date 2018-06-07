@@ -4,7 +4,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import sys
 sys.path.append("../../")
-from TCN.timeseries.utils import sine_data_generator
+from TCN.timeseries.utils import *
 from TCN.timeseries.model import *
 import numpy as np
 import argparse
@@ -57,6 +57,10 @@ parser.add_argument('--outfile', type=str, default='predictions.txt',
                     help='output file name')
 parser.add_argument('--lstm', action='store_true', default=False,
                     help='whether or not to use LSTM')
+parser.add_argument('--hard', action='store_true', default=False,
+                    help='easy to hard test case')
+parser.add_argument('--kernel', action='store_true', default=False,
+                    help='sweep kernel size instead of levels')
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
@@ -77,8 +81,12 @@ test_losses = []
 
 print(args)
 print("Producing data...")
-X_train, Y_train = sine_data_generator(50000, seq_length)
-X_test, Y_test = sine_data_generator(5000, seq_length)
+if args.hard:
+    X_train, Y_train = two_sine_data_generator(50000, seq_length)
+    X_test, Y_test = two_sine_data_generator(5000, seq_length)
+else:
+    X_train, Y_train = sine_data_generator(50000, seq_length)
+    X_test, Y_test = sine_data_generator(5000, seq_length)
 if args.cuda:
     X_train = X_train.cuda()
     Y_train = Y_train.cuda()
@@ -92,6 +100,16 @@ def model_init(channel_sizes):
         model = LSTM(input_channels, channel_sizes, n_classes)
     else:
         model = TCN(input_channels, n_classes, channel_sizes, kernel_size=kernel_size, dropout=args.dropout)
+
+    if args.cuda:
+        model.cuda()
+
+    optimizer = getattr(optim, args.optim)(model.parameters(), lr=lr)
+    return model, optimizer
+
+def tcn_model_init(kernel_size):
+    model = TCN(input_channels, n_classes, [args.nhid] * args.levels,
+        kernel_size=kernel_size, dropout=args.dropout)
 
     if args.cuda:
         model.cuda()
@@ -141,14 +159,47 @@ def evaluate(is_output=True):
         print('\nTest set: Average loss: {:.6f}\n'.format(test_loss.data[0]))
     return test_loss.data[0]
 
+def gen_sine():
+    period = int(seq_length / 1.5)
+    prediction_inputs = []
+    const = 2 * np.pi / period
+    for i in range(5):
+        phase = np.random.rand() * period
+        data = np.sin(np.arange(period) * const + phase * const) + \
+            np.random.normal(scale=0.2, size=period)
+        raw = np.append(data, data[:seq_length - period])
+        prediction_inputs.append(raw)
+        f.write('%s\n' %str(list(raw)))
+    return prediction_inputs
+
+def gen_two_sine():
+    period1 = int(seq_length / 2)
+    period2 = int(seq_length / 4 * 3)
+    period = int(seq_length / 2 * 3)
+    prediction_inputs = []
+    const1 = 2 * np.pi / period1
+    const2 = 2 * np.pi / period2
+    for i in range(5):
+        phase = np.random.rand() * period
+        noise = np.random.normal(scale=0.2, size=(seq_length))
+        noise = np.append(noise, np.zeros(period * 2 - seq_length))
+        raw = (np.sin(np.arange(period * 2) * const1 + phase * const1) + \
+          np.sin(np.arange(period * 2) * const2 + phase * const2) + \
+          noise) / 2
+        prediction_inputs.append(raw[:seq_length])
+        f.write('%s\n' %str(list(raw)))
+    return prediction_inputs
 
 def prediction(prediction_inputs):
     model.eval()
+    predition_length = seq_length
+    if args.hard:
+        predition_length = int(seq_length / 2 * 3)
     for i in range(len(prediction_inputs)):
         raw = prediction_inputs[i]
         predict_x = Variable(torch.FloatTensor(raw).unsqueeze(0).unsqueeze(0))
         predictions = []
-        for i in range(seq_length):
+        for i in range(predition_length):
             output = model(predict_x.cuda()).data.cpu().numpy()[0][0]
             predictions.append(output)
             raw = np.append(raw[1:], [output])
@@ -157,32 +208,40 @@ def prediction(prediction_inputs):
 
 if __name__ == "__main__":
     f = open(args.outfile, "w")
-    period = seq_length / 1.5
-    prediction_inputs = []
-    for i in range(5):
-        phase = np.random.rand() * period
-        raw = np.sin(np.arange(seq_length) * 2 * np.pi / period + phase)
-        prediction_inputs.append(raw)
-        f.write('%s\n' %str(list(raw)))
-    for levels in range(1, 8):
-        print("Level: %d" % levels)
-        if args.lstm:
-            channel_sizes = levels * 4
-        else:
-            channel_sizes = [args.nhid] * levels
-        model, optimizer = model_init(channel_sizes)
-        for ep in range(1, epochs+1):
-            train(ep)
-            tloss = evaluate()
+    if args.hard:
+        prediction_inputs = gen_two_sine()
+    else:
+        prediction_inputs = gen_sine()
 
-        f.write('level: %d\n' % levels)
-        f.write("Model parameters: %d\n" % count_parameters(model))
-        prediction(prediction_inputs)
-        f.write('\n')
-    f.close()
-    # f.close()
-    # f = open(args.loss_file, 'w')
-    # for (i, l) in test_losses:
-    #     f.write("%d, %f\n" % (i, l))
-    # f.close()
+    if not args.kernel:
+        for levels in range(1, 9):
+            print("Level: %d" % levels)
+            if args.lstm:
+                channel_sizes = levels * 5
+            else:
+                channel_sizes = [args.nhid] * levels
+            model, optimizer = model_init(channel_sizes)
+            for ep in range(1, epochs+1):
+                train(ep)
+                tloss = evaluate()
+
+            f.write('level: %d\n' % levels)
+            f.write("Model parameters: %d\n" % count_parameters(model))
+            prediction(prediction_inputs)
+            f.write('\n')
+        f.close()
+    else:
+        # Sweep kernel size for fixed layers
+        for ksize in range(2, 9):
+            print("Kernel: %d" % ksize)
+            model, optimizer = tcn_model_init(ksize)
+            for ep in range(1, epochs+1):
+                train(ep)
+                tloss = evaluate()
+
+            f.write('kernel: %d\n' % ksize)
+            f.write("Model parameters: %d\n" % count_parameters(model))
+            prediction(prediction_inputs)
+            f.write('\n')
+        f.close()
 
